@@ -24,6 +24,8 @@
 #define dev_to_mmc_card(d)	container_of(d, struct mmc_card, dev)
 #define to_mmc_driver(d)	container_of(d, struct mmc_driver, drv)
 
+static struct mmc_driver *assd_drv;
+
 static ssize_t mmc_type_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
@@ -101,13 +103,27 @@ static int mmc_bus_probe(struct device *dev)
 	struct mmc_driver *drv = to_mmc_driver(dev->driver);
 	struct mmc_card *card = dev_to_mmc_card(dev);
 
-	return drv->probe(card);
+	int ret = 0;
+
+	ret = drv->probe(card);
+
+	if (assd_drv != NULL)
+		assd_drv->probe(card);
+
+	return ret;
 }
 
 static int mmc_bus_remove(struct device *dev)
 {
 	struct mmc_driver *drv = to_mmc_driver(dev->driver);
 	struct mmc_card *card = dev_to_mmc_card(dev);
+
+	/*
+	 * inform the assd module about the removal of a card.
+	 * but only if the assd module is loaded.
+	 */
+	if (assd_drv != NULL)
+		assd_drv->remove(card);
 
 	drv->remove(card);
 
@@ -119,6 +135,9 @@ static int mmc_bus_suspend(struct device *dev, pm_message_t state)
 	struct mmc_driver *drv = to_mmc_driver(dev->driver);
 	struct mmc_card *card = dev_to_mmc_card(dev);
 	int ret = 0;
+
+	if (assd_drv != NULL)
+		assd_drv->suspend(card, state);
 
 	if (dev->driver && drv->suspend)
 		ret = drv->suspend(card, state);
@@ -133,6 +152,10 @@ static int mmc_bus_resume(struct device *dev)
 
 	if (dev->driver && drv->resume)
 		ret = drv->resume(card);
+
+	if (assd_drv != NULL)
+		assd_drv->resume(card);
+
 	return ret;
 }
 
@@ -163,6 +186,15 @@ void mmc_unregister_bus(void)
  */
 int mmc_register_driver(struct mmc_driver *drv)
 {
+	/*
+	 * keep track whether or not the assd module is loaded.
+	 */
+	if (!strcmp(drv->drv.name, "sd_assd")) {
+
+		assd_drv = drv;
+		return 0;
+	}
+
 	drv->drv.bus = &mmc_bus_type;
 	return driver_register(&drv->drv);
 }
@@ -175,6 +207,15 @@ EXPORT_SYMBOL(mmc_register_driver);
  */
 void mmc_unregister_driver(struct mmc_driver *drv)
 {
+	/*
+	 * keep track whether or not the assd module is loaded.
+	 */
+	if (!strcmp(drv->drv.name, "sd_assd")) {
+
+		assd_drv = NULL;
+		return;
+	}
+
 	drv->drv.bus = &mmc_bus_type;
 	driver_unregister(&drv->drv);
 }
